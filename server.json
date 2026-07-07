@@ -1,0 +1,43 @@
+{
+	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+	"name": "io.github.dominik1001/carddav-mcp",
+	"description": "CardDAV contact operations (list address books, list, get, create, update, delete contacts) as MCP tools.",
+	"repository": {
+		"url": "https://github.com/dominik1001/carddav-mcp",
+		"source": "github"
+	},
+	"version": "0.1.0",
+	"packages": [
+		{
+			"registryType": "npm",
+			"identifier": "carddav-mcp",
+			"version": "0.1.0",
+			"transport": {
+				"type": "stdio"
+			},
+			"environmentVariables": [
+				{
+					"name": "CARDDAV_BASE_URL",
+					"description": "Base URL of the CardDAV server (e.g. https://carddav.example.com)",
+					"isRequired": true,
+					"format": "string",
+					"isSecret": false
+				},
+				{
+					"name": "CARDDAV_USERNAME",
+					"description": "Username for CardDAV authentication",
+					"isRequired": true,
+					"format": "string",
+					"isSecret": false
+				},
+				{
+					"name": "CARDDAV_PASSWORD",
+					"description": "Password for CardDAV authentication",
+					"isRequired": true,
+					"format": "string",
+					"isSecret": true
+				}
+			]
+		}
+	]
+}
