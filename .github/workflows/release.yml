@@ -161,7 +161,13 @@ jobs:
           node-version: "22"
       - run: npm ci
       - run: npm run build
+      # NPM_TOKEN authenticates the first publish, before the package exists
+      # on the registry. Once it does, configure npm trusted publishing for
+      # this workflow, remove the secret, and drop the NPM_TOKEN line (OIDC
+      # needs npm >= 11.5.1, hence the npm upgrade step above semantic-release
+      # when you switch).
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           LEFTHOOK: "0"
