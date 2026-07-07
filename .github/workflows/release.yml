@@ -145,6 +145,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # semantic-release defaults the very first release to 1.0.0. Seeding a
+      # v0.0.0 baseline tag on the root commit makes the initial feat commits
+      # produce 0.1.0 instead. No-op once any v* tag exists.
+      - name: Seed v0.0.0 baseline tag for the first release
+        run: |
+          git fetch --tags --quiet
+          if [ -z "$(git tag -l 'v*')" ]; then
+            root=$(git rev-list --max-parents=0 HEAD | tail -n1)
+            git tag v0.0.0 "$root"
+            git push origin v0.0.0
+          fi
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
