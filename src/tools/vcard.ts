@@ -123,6 +123,77 @@ function propertyName(line: string): string | null {
 	return withoutGroup.toUpperCase();
 }
 
+/** Property group of a logical line, e.g. `item3` in `item3.X-ABLABEL:...`. */
+function propertyGroup(line: string): string | null {
+	const split = splitLine(line);
+	if (!split) return null;
+	const name = split.head.split(";")[0] ?? "";
+	return name.includes(".") ? (name.split(".")[0] ?? "").toLowerCase() : null;
+}
+
+/** Apple writes its relation labels as `_$!<Spouse>!$_`. */
+const APPLE_LABEL = /^_\$!<(.+)>!\$_$/;
+
+const BINARY_PROPERTIES = new Set(["PHOTO", "LOGO", "SOUND", "KEY"]);
+
+/**
+ * Replaces embedded binary payloads with a short marker.
+ *
+ * An inline PHOTO is base64 and routinely runs to tens of thousands of
+ * characters — on a card carrying a portrait it is easily 95% of the vCard.
+ * Handing that to a model wastes its context without telling it anything, so
+ * the marker keeps the fact that a photo exists and drops the bytes. Folding
+ * is not restored, the result is meant to be read rather than stored.
+ */
+export function stripBinaryValues(data: string): string {
+	const lines = unfoldLines(data).map((line) => {
+		const split = splitLine(line);
+		const name = propertyName(line);
+		if (!split || !name || !BINARY_PROPERTIES.has(name)) return line;
+		const isBinary =
+			/;ENCODING=(B|BASE64)(;|$)/i.test(split.head) ||
+			split.value.startsWith("data:");
+		return isBinary
+			? `${split.head}:<${split.value.length} bytes omitted>`
+			: line;
+	});
+	return `${lines.join("\r\n")}\r\n`;
+}
+
+/**
+ * Relations recorded on a card, keyed by role: `{ Spouse: "Susann Baer" }`.
+ *
+ * Clients store these as a pair sharing a property group — `item3.X-ABLABEL`
+ * holds the role and `item3.X-ABRELATEDNAMES` the person — which is tedious to
+ * reassemble from raw vCard text and easy to get wrong.
+ */
+export function parseRelations(data: string): Record<string, string> {
+	const labels = new Map<string, string>();
+	const names = new Map<string, string>();
+	const relations: Record<string, string> = {};
+
+	for (const line of unfoldLines(data)) {
+		const split = splitLine(line);
+		const name = propertyName(line);
+		if (!split || !name) continue;
+		const value = unescapeText(split.value).trim();
+		if (name === "X-SPOUSE" && value) relations.Spouse = value;
+		const group = propertyGroup(line);
+		if (!group || !value) continue;
+		if (name === "X-ABLABEL") {
+			labels.set(group, APPLE_LABEL.exec(value)?.[1] ?? value);
+		} else if (name === "X-ABRELATEDNAMES") {
+			names.set(group, value);
+		}
+	}
+
+	for (const [group, role] of labels) {
+		const person = names.get(group);
+		if (person) relations[role] = person;
+	}
+	return relations;
+}
+
 function parseName(value: string): ContactName {
 	const [family, given, middle, prefix, suffix] = splitComponents(value).map(
 		(c) => unescapeText(c),

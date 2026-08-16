@@ -99,7 +99,7 @@ Parameters:
 - `addressBookUrl`: string
 
 Returns:
-- The contact's parsed fields (`uid`, `fn`, `name`, `emails`, `phones`, and optionally `org`, `title`, `note`) plus the raw vCard in `vcard`
+- The contact's parsed fields (`uid`, `fn`, `name`, `emails`, `phones`, and optionally `org`, `title`, `note`), any recorded relations keyed by role in `relations` (e.g. `{"Spouse": "Ada Lovelace"}`), plus the vCard in `vcard` with embedded binary values such as PHOTO replaced by a size marker
 
 ### create-contact
 
