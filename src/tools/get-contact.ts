@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DAVClient } from "tsdav";
 import { z } from "zod";
 import { resolveContact } from "./resolve-contact.js";
-import { parseVCard } from "./vcard.js";
+import { parseRelations, parseVCard, stripBinaryValues } from "./vcard.js";
 
 type GetContactInput = {
 	uid: string;
@@ -22,7 +22,7 @@ export const getContactDefinition = {
 		addressBookUrl: z.string(),
 	},
 	returns:
-		"The contact's parsed fields (`uid`, `fn`, `name`, `emails`, `phones`, and optionally `org`, `title`, `note`) plus the raw vCard in `vcard`",
+		'The contact\'s parsed fields (`uid`, `fn`, `name`, `emails`, `phones`, and optionally `org`, `title`, `note`), any recorded relations in `relations`, keyed by role with a list of names because a role such as Child can occur several times (e.g. `{"Spouse": ["Ada Lovelace"]}`), plus the vCard in `vcard`. That copy has embedded binary values such as PHOTO replaced by a size marker and is normalised rather than byte-for-byte: continuation lines are unfolded and line endings are rewritten, so do not treat it as the stored representation',
 } as const;
 
 export function registerGetContact(client: DAVClient, server: McpServer) {
@@ -35,7 +35,9 @@ export function registerGetContact(client: DAVClient, server: McpServer) {
 		async (args: GetContactInput) => {
 			const { uid, addressBookUrl } = args;
 			const card = await resolveContact(client, addressBookUrl, uid);
-			const parsed = parseVCard(card.data as string);
+			const raw = card.data as string;
+			const parsed = parseVCard(raw);
+			const relations = parseRelations(raw);
 			const data = {
 				uid,
 				...(parsed.fn !== undefined && { fn: parsed.fn }),
@@ -45,7 +47,8 @@ export function registerGetContact(client: DAVClient, server: McpServer) {
 				...(parsed.org !== undefined && { org: parsed.org }),
 				...(parsed.title !== undefined && { title: parsed.title }),
 				...(parsed.note !== undefined && { note: parsed.note }),
-				vcard: card.data as string,
+				...(Object.keys(relations).length > 0 && { relations }),
+				vcard: stripBinaryValues(raw),
 			};
 			return {
 				content: [{ type: "text", text: JSON.stringify(data) }],
