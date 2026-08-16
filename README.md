@@ -99,7 +99,7 @@ Parameters:
 - `addressBookUrl`: string
 
 Returns:
-- The contact's parsed fields (`uid`, `fn`, `name`, `emails`, `phones`, and optionally `org`, `title`, `note`), any recorded relations keyed by role in `relations` (e.g. `{"Spouse": "Ada Lovelace"}`), plus the vCard in `vcard` with embedded binary values such as PHOTO replaced by a size marker
+- The contact's parsed fields (`uid`, `fn`, `name`, `emails`, `phones`, and optionally `org`, `title`, `note`), any recorded relations in `relations`, keyed by role with a list of names because a role such as Child can occur several times (e.g. `{"Spouse": ["Ada Lovelace"]}`), plus the vCard in `vcard`. That copy has embedded binary values such as PHOTO replaced by a size marker and is normalised rather than byte-for-byte: continuation lines are unfolded and line endings are rewritten, so do not treat it as the stored representation
 
 ### create-contact
 

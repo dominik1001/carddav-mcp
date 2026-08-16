@@ -212,10 +212,38 @@ describe("parseRelations", () => {
 			"END:VCARD",
 		].join("\r\n");
 		expect(parseRelations(card)).toEqual({
-			Spouse: "Susann Baer",
-			Mother: "Edith Baer",
-			Brother: "Randolf Baer",
+			Spouse: ["Susann Baer"],
+			Mother: ["Edith Baer"],
+			Brother: ["Randolf Baer"],
 		});
+	});
+
+	test("keeps every name when a role appears more than once", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"FN:Jan Baer",
+			"item1.X-ABLABEL:_$!<Child>!$_",
+			"item1.X-ABRELATEDNAMES:Alice Baer",
+			"item2.X-ABLABEL:_$!<Child>!$_",
+			"item2.X-ABRELATEDNAMES:Bob Baer",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Child: ["Alice Baer", "Bob Baer"],
+		});
+	});
+
+	test("records a person reached twice only once", () => {
+		// X-SPOUSE and an item pair commonly name the same person.
+		const card = [
+			"BEGIN:VCARD",
+			"FN:Jan Baer",
+			"X-SPOUSE:Susann Baer",
+			"item1.X-ABLABEL:_$!<Spouse>!$_",
+			"item1.X-ABRELATEDNAMES:Susann Baer",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({ Spouse: ["Susann Baer"] });
 	});
 
 	test("returns nothing for a card without relations", () => {

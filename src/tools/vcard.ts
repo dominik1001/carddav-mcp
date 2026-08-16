@@ -167,17 +167,29 @@ export function stripBinaryValues(data: string): string {
  * holds the role and `item3.X-ABRELATEDNAMES` the person — which is tedious to
  * reassemble from raw vCard text and easy to get wrong.
  */
-export function parseRelations(data: string): Record<string, string> {
+export function parseRelations(data: string): Record<string, string[]> {
 	const labels = new Map<string, string>();
 	const names = new Map<string, string>();
-	const relations: Record<string, string> = {};
+	const relations: Record<string, string[]> = {};
+
+	// A role is not unique on a card: children, siblings and friends routinely
+	// appear several times over. Collecting them keeps every name; the same
+	// person reached twice, as X-SPOUSE usually is, is recorded once.
+	const add = (role: string, person: string) => {
+		const people = relations[role];
+		if (!people) {
+			relations[role] = [person];
+		} else if (!people.includes(person)) {
+			people.push(person);
+		}
+	};
 
 	for (const line of unfoldLines(data)) {
 		const split = splitLine(line);
 		const name = propertyName(line);
 		if (!split || !name) continue;
 		const value = unescapeText(split.value).trim();
-		if (name === "X-SPOUSE" && value) relations.Spouse = value;
+		if (name === "X-SPOUSE" && value) add("Spouse", value);
 		const group = propertyGroup(line);
 		if (!group || !value) continue;
 		if (name === "X-ABLABEL") {
@@ -189,7 +201,7 @@ export function parseRelations(data: string): Record<string, string> {
 
 	for (const [group, role] of labels) {
 		const person = names.get(group);
-		if (person) relations[role] = person;
+		if (person) add(role, person);
 	}
 	return relations;
 }
