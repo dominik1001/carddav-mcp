@@ -117,6 +117,26 @@ describe("registerListContacts", () => {
 		});
 	});
 
+	test("recognises the collection's own href with a differing trailing slash", async () => {
+		const mockClient = {
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					{ href: "/dav/contacts/" },
+					{ href: "/dav/contacts/a.vcf" },
+				]),
+			fetchVCards: vi.fn().mockResolvedValue([]),
+		};
+
+		// Caller passes the collection without the trailing slash the server uses.
+		await run(mockClient, "/dav/contacts");
+
+		expect(mockClient.fetchVCards).toHaveBeenCalledWith({
+			addressBook: { url: "/dav/contacts" },
+			objectUrls: ["/dav/contacts/a.vcf"],
+		});
+	});
+
 	test("does not call fetchVCards for an empty address book", async () => {
 		const mockClient = {
 			propfind: vi.fn().mockResolvedValue([{ href: "/dav/contacts/" }]),

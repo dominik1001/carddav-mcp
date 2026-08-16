@@ -41,11 +41,18 @@ async function listCardUrls(
 		props: { "d:getetag": {} },
 		depth: "1",
 	});
+	// Servers differ on whether a collection's own href carries a trailing
+	// slash, and it need not match the one the caller passed in. Comparing the
+	// raw paths would let the collection itself slip into the result and be
+	// requested as if it were a card.
+	const withoutTrailingSlash = (path: string) => path.replace(/\/+$/, "");
+	const collectionPath = withoutTrailingSlash(collection.pathname);
+
 	return responses
 		.map((response) => response.href)
 		.filter((href): href is string => Boolean(href))
 		.map((href) => new URL(href, collection).pathname)
-		.filter((path) => path !== collection.pathname);
+		.filter((path) => withoutTrailingSlash(path) !== collectionPath);
 }
 
 export function registerListContacts(client: DAVClient, server: McpServer) {
