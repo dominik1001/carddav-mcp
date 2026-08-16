@@ -20,9 +20,30 @@ function makeServer() {
 	return { server, getHandler: () => toolHandler };
 }
 
+function run(client: unknown, addressBookUrl = "/dav/contacts/") {
+	const { server, getHandler } = makeServer();
+	registerListContacts(client as DAVClient, server);
+	const handler = getHandler();
+	if (!handler) throw new Error("handler not registered");
+	return handler({ addressBookUrl });
+}
+
+function parse(result: { content: { text: string }[] }) {
+	const text = result.content[0]?.text;
+	if (!text) throw new Error("no text content");
+	return JSON.parse(text);
+}
+
 describe("registerListContacts", () => {
 	test("returns a summary per contact", async () => {
 		const mockClient = {
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					{ href: "/dav/contacts/" },
+					{ href: "/dav/contacts/a.vcf" },
+					{ href: "/dav/contacts/b.vcf" },
+				]),
 			fetchVCards: vi.fn().mockResolvedValue([
 				{
 					url: "/dav/contacts/a.vcf",
@@ -35,18 +56,18 @@ describe("registerListContacts", () => {
 			]),
 		};
 
-		const { server, getHandler } = makeServer();
-		registerListContacts(mockClient as unknown as DAVClient, server);
-		const handler = getHandler();
-		if (!handler) throw new Error("handler not registered");
+		const result = await run(mockClient);
 
-		const result = await handler({ addressBookUrl: "/dav/contacts/" });
+		expect(mockClient.propfind).toHaveBeenCalledWith({
+			url: "/dav/contacts/",
+			props: { "d:getetag": {} },
+			depth: "1",
+		});
 		expect(mockClient.fetchVCards).toHaveBeenCalledWith({
 			addressBook: { url: "/dav/contacts/" },
+			objectUrls: ["/dav/contacts/a.vcf", "/dav/contacts/b.vcf"],
 		});
-		const text = result.content[0]?.text;
-		if (!text) throw new Error("no text content");
-		expect(JSON.parse(text)).toEqual([
+		expect(parse(result)).toEqual([
 			{
 				uid: "a",
 				fn: "Ada Lovelace",
@@ -59,6 +80,12 @@ describe("registerListContacts", () => {
 
 	test("skips entries without vCard data", async () => {
 		const mockClient = {
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					{ href: "/dav/contacts/broken.vcf" },
+					{ href: "/dav/contacts/a.vcf" },
+				]),
 			fetchVCards: vi.fn().mockResolvedValue([
 				{ url: "/dav/contacts/broken.vcf", data: undefined },
 				{
@@ -68,14 +95,35 @@ describe("registerListContacts", () => {
 			]),
 		};
 
-		const { server, getHandler } = makeServer();
-		registerListContacts(mockClient as unknown as DAVClient, server);
-		const handler = getHandler();
-		if (!handler) throw new Error("handler not registered");
+		expect(parse(await run(mockClient))).toHaveLength(1);
+	});
 
-		const result = await handler({ addressBookUrl: "/dav/contacts/" });
-		const text = result.content[0]?.text;
-		if (!text) throw new Error("no text content");
-		expect(JSON.parse(text)).toHaveLength(1);
+	test("resolves absolute hrefs against an absolute collection url", async () => {
+		const mockClient = {
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					{ href: "https://dav.example.org/carddav/32/" },
+					{ href: "https://dav.example.org/carddav/32/a.vcf" },
+				]),
+			fetchVCards: vi.fn().mockResolvedValue([]),
+		};
+
+		await run(mockClient, "https://dav.example.org/carddav/32/");
+
+		expect(mockClient.fetchVCards).toHaveBeenCalledWith({
+			addressBook: { url: "https://dav.example.org/carddav/32/" },
+			objectUrls: ["/carddav/32/a.vcf"],
+		});
+	});
+
+	test("does not call fetchVCards for an empty address book", async () => {
+		const mockClient = {
+			propfind: vi.fn().mockResolvedValue([{ href: "/dav/contacts/" }]),
+			fetchVCards: vi.fn(),
+		};
+
+		expect(parse(await run(mockClient))).toEqual([]);
+		expect(mockClient.fetchVCards).not.toHaveBeenCalled();
 	});
 });
