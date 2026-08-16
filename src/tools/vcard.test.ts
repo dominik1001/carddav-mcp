@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { parseVCard, serializeVCard, updateVCardData } from "./vcard.js";
+import {
+	parseRelations,
+	parseVCard,
+	serializeVCard,
+	stripBinaryValues,
+	updateVCardData,
+} from "./vcard.js";
 
 describe("serializeVCard", () => {
 	test("produces a CRLF-terminated vCard 3.0 with UID, FN and derived N", () => {
@@ -160,5 +166,59 @@ describe("updateVCardData", () => {
 		expect(() => updateVCardData("BEGIN:VCARD\r\nUID:u1", { fn: "x" })).toThrow(
 			/END:VCARD/,
 		);
+	});
+});
+
+describe("stripBinaryValues", () => {
+	test("replaces an inline photo with a size marker", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"VERSION:3.0",
+			"FN:Ada Lovelace",
+			`PHOTO;ENCODING=b;TYPE=jpeg:${"A".repeat(5000)}`,
+			"END:VCARD",
+		].join("\r\n");
+		const stripped = stripBinaryValues(card);
+		expect(stripped).toContain(
+			"PHOTO;ENCODING=b;TYPE=jpeg:<5000 bytes omitted>",
+		);
+		expect(stripped).toContain("FN:Ada Lovelace");
+		expect(stripped.length).toBeLessThan(300);
+	});
+
+	test("leaves a photo reference by URL alone", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"PHOTO;VALUE=uri:https://example.com/ada.jpg",
+			"END:VCARD",
+		].join("\r\n");
+		expect(stripBinaryValues(card)).toContain(
+			"PHOTO;VALUE=uri:https://example.com/ada.jpg",
+		);
+	});
+});
+
+describe("parseRelations", () => {
+	test("pairs a label with the related name by property group", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"FN:Alex Example",
+			"X-SPOUSE:Sam Example",
+			"item1.X-ABLABEL:homePage",
+			"item2.X-ABLABEL:_$!<Mother>!$_",
+			"item2.X-ABRELATEDNAMES:Kim Example",
+			"item4.X-ABLABEL:_$!<Brother>!$_",
+			"item4.X-ABRELATEDNAMES:Robin Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Spouse: "Sam Example",
+			Mother: "Kim Example",
+			Brother: "Robin Example",
+		});
+	});
+
+	test("returns nothing for a card without relations", () => {
+		expect(parseRelations("BEGIN:VCARD\r\nFN:Ada\r\nEND:VCARD")).toEqual({});
 	});
 });
