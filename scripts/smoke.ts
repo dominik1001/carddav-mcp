@@ -2,7 +2,6 @@
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { DAVClient } from "tsdav";
 
 type ToolResult = {
 	content: Array<{ type: string; text: string }>;
@@ -222,30 +221,26 @@ async function main() {
 	log("missing address book reported as error", missingError.slice(0, 80));
 
 	// Cards written by other clients need not be stored as `<uid>.vcf`. Put one
-	// under an unrelated filename directly over CardDAV, so get/update/delete
-	// can only find it through resolveContact's address-book scan.
-	const dav = new DAVClient({
-		serverUrl: requireEnv("CARDDAV_BASE_URL"),
-		credentials: {
-			username: requireEnv("CARDDAV_USERNAME"),
-			password: requireEnv("CARDDAV_PASSWORD"),
-		},
-		authMethod: "Basic",
-		defaultAccountType: "carddav",
-	});
-	await dav.login();
+	// under an unrelated filename with plain HTTP, as another client would, so
+	// get/update/delete can only find it through resolveContact's scan.
+	const authorization = `Basic ${Buffer.from(
+		`${requireEnv("CARDDAV_USERNAME")}:${requireEnv("CARDDAV_PASSWORD")}`,
+	).toString("base64")}`;
 
 	const foreignUid = `carddav-mcp-smoke-${randomUUID()}`;
-	const foreignFilename = `other-client-${randomUUID()}.vcf`;
 	const foreignHref = new URL(
-		foreignFilename,
+		`other-client-${randomUUID()}.vcf`,
 		withTrailingSlash(addressBookUrl),
 	).href;
 	const foreignFn = `Smoke Foreign ${stamp}`;
-	const created = await dav.createVCard({
-		addressBook: { url: withTrailingSlash(addressBookUrl) },
-		filename: foreignFilename,
-		vCardString: [
+	const created = await fetch(foreignHref, {
+		method: "PUT",
+		headers: {
+			Authorization: authorization,
+			"Content-Type": "text/vcard; charset=utf-8",
+			"If-None-Match": "*",
+		},
+		body: [
 			"BEGIN:VCARD",
 			"VERSION:3.0",
 			`UID:${foreignUid}`,
@@ -260,7 +255,7 @@ async function main() {
 		throw new Error(
 			`Could not seed foreign card: ${created.status} ${created.statusText}`,
 		);
-	log("seeded card under a foreign filename", foreignFilename);
+	log("seeded card under a foreign filename", new URL(foreignHref).pathname);
 
 	try {
 		const foreign = JSON.parse(
@@ -287,11 +282,10 @@ async function main() {
 		);
 		// The update must be written back to the card's own href, not to a new
 		// `<uid>.vcf` beside it.
-		const [stored] = await dav.fetchVCards({
-			addressBook: { url: withTrailingSlash(addressBookUrl) },
-			objectUrls: [foreignHref],
+		const stored = await fetch(foreignHref, {
+			headers: { Authorization: authorization },
 		});
-		if (!stored?.data?.includes("updated by smoke test"))
+		if (!stored.ok || !(await stored.text()).includes("updated by smoke test"))
 			throw new Error("Update was not written to the foreign card's href");
 		log("updated foreign card in place");
 
@@ -314,9 +308,10 @@ async function main() {
 		log("deleted foreign card");
 	} catch (err) {
 		// Leave no smoke data behind when a step above failed.
-		await dav
-			.deleteVCard({ vCard: { url: foreignHref, data: "", etag: "" } })
-			.catch(() => {});
+		await fetch(foreignHref, {
+			method: "DELETE",
+			headers: { Authorization: authorization },
+		}).catch(() => {});
 		throw err;
 	}
 
