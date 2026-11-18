@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -17,6 +18,20 @@ function unwrapText(result: unknown): string {
 		throw new Error(`Tool returned error: ${first.text}`);
 	}
 	return first.text;
+}
+
+/** Asserts the tool reported an error instead of returning a result. */
+function expectToolError(result: unknown, what: string): string {
+	const r = result as ToolResult;
+	const text = r.content?.[0]?.text ?? "";
+	if (!r.isError) {
+		throw new Error(`${what}: expected a tool error, got result: ${text}`);
+	}
+	return text;
+}
+
+function withTrailingSlash(url: string): string {
+	return url.endsWith("/") ? url : `${url}/`;
 }
 
 function log(step: string, detail?: unknown) {
@@ -189,6 +204,116 @@ async function main() {
 	if (after.some((c) => c.uid === updatedUid))
 		throw new Error(`Contact ${updatedUid} still present after delete`);
 	log("verified deletion");
+
+	// An address book that cannot be read must surface as a tool error. An
+	// empty list would tell the agent the address book has no contacts.
+	const missingBookUrl = new URL(
+		`carddav-mcp-smoke-missing-${randomUUID()}/`,
+		withTrailingSlash(addressBookUrl),
+	).href;
+	const missingError = expectToolError(
+		await client.callTool({
+			name: "list-contacts",
+			arguments: { addressBookUrl: missingBookUrl },
+		}),
+		"list-contacts on a missing address book",
+	);
+	log("missing address book reported as error", missingError.slice(0, 80));
+
+	// Cards written by other clients need not be stored as `<uid>.vcf`. Put one
+	// under an unrelated filename with plain HTTP, as another client would, so
+	// get/update/delete can only find it through resolveContact's scan.
+	const authorization = `Basic ${Buffer.from(
+		`${requireEnv("CARDDAV_USERNAME")}:${requireEnv("CARDDAV_PASSWORD")}`,
+	).toString("base64")}`;
+
+	const foreignUid = `carddav-mcp-smoke-${randomUUID()}`;
+	const foreignHref = new URL(
+		`other-client-${randomUUID()}.vcf`,
+		withTrailingSlash(addressBookUrl),
+	).href;
+	const foreignFn = `Smoke Foreign ${stamp}`;
+	const created = await fetch(foreignHref, {
+		method: "PUT",
+		headers: {
+			Authorization: authorization,
+			"Content-Type": "text/vcard; charset=utf-8",
+			"If-None-Match": "*",
+		},
+		body: [
+			"BEGIN:VCARD",
+			"VERSION:3.0",
+			`UID:${foreignUid}`,
+			`FN:${foreignFn}`,
+			"N:Foreign;Smoke;;;",
+			"EMAIL:foreign@example.com",
+			"END:VCARD",
+			"",
+		].join("\r\n"),
+	});
+	if (!created.ok)
+		throw new Error(
+			`Could not seed foreign card: ${created.status} ${created.statusText}`,
+		);
+	log("seeded card under a foreign filename", new URL(foreignHref).pathname);
+
+	try {
+		const foreign = JSON.parse(
+			unwrapText(
+				await client.callTool({
+					name: "get-contact",
+					arguments: { uid: foreignUid, addressBookUrl },
+				}),
+			),
+		) as { fn?: string };
+		if (foreign.fn !== foreignFn)
+			throw new Error(`Foreign get fn mismatch: ${foreign.fn}`);
+		log("got foreign card by uid");
+
+		unwrapText(
+			await client.callTool({
+				name: "update-contact",
+				arguments: {
+					uid: foreignUid,
+					addressBookUrl,
+					note: "updated by smoke test",
+				},
+			}),
+		);
+		// The update must be written back to the card's own href, not to a new
+		// `<uid>.vcf` beside it.
+		const stored = await fetch(foreignHref, {
+			headers: { Authorization: authorization },
+		});
+		if (!stored.ok || !(await stored.text()).includes("updated by smoke test"))
+			throw new Error("Update was not written to the foreign card's href");
+		log("updated foreign card in place");
+
+		unwrapText(
+			await client.callTool({
+				name: "delete-contact",
+				arguments: { uid: foreignUid, addressBookUrl },
+			}),
+		);
+		const afterForeign = JSON.parse(
+			unwrapText(
+				await client.callTool({
+					name: "list-contacts",
+					arguments: { addressBookUrl },
+				}),
+			),
+		) as Array<{ uid?: string }>;
+		if (afterForeign.some((c) => c.uid === foreignUid))
+			throw new Error(`Foreign card ${foreignUid} still present after delete`);
+		log("deleted foreign card");
+	} catch (err) {
+		// Leave no smoke data behind when a step above failed.
+		await fetch(foreignHref, {
+			method: "DELETE",
+			headers: { Authorization: authorization },
+		}).catch(() => {});
+		throw err;
+	}
 
 	await client.close();
 	console.log("\n✅ smoke test passed");
