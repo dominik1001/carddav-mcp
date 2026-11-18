@@ -34,6 +34,23 @@ function withTrailingSlash(url: string): string {
 	return url.endsWith("/") ? url : `${url}/`;
 }
 
+/** Folds a content line at 75 characters, as RFC 6350 clients write them. */
+function fold(line: string): string {
+	const parts = [line.slice(0, 75)];
+	for (let i = 75; i < line.length; i += 74) {
+		parts.push(` ${line.slice(i, i + 74)}`);
+	}
+	return parts.join("\r\n");
+}
+
+/** Logical content lines of a vCard, with folded continuations joined. */
+function unfold(vcard: string): string[] {
+	return vcard
+		.replace(/\r?\n[ \t]/g, "")
+		.split(/\r?\n/)
+		.filter((line) => line.length > 0);
+}
+
 function log(step: string, detail?: unknown) {
 	const suffix =
 		detail === undefined
@@ -314,6 +331,111 @@ async function main() {
 		}).catch(() => {});
 		throw err;
 	}
+
+	// Cards from real address books carry far more than the fields these tools
+	// model: inline photos, Apple's grouped relation labels (free text, so any
+	// word, including `constructor`), long folded lines. get-contact must still
+	// read such a card, and update-contact must keep every property it does not
+	// change.
+	const unusualUid = `carddav-mcp-smoke-${randomUUID()}`;
+	const unusualHref = new URL(
+		`other-client-${randomUUID()}.vcf`,
+		withTrailingSlash(addressBookUrl),
+	).href;
+	const unusualFn = `Smoke Unusual ${stamp}`;
+	const photo = Buffer.alloc(30_000, "carddav-mcp smoke photo ").toString(
+		"base64",
+	);
+	const seeded = await fetch(unusualHref, {
+		method: "PUT",
+		headers: {
+			Authorization: authorization,
+			"Content-Type": "text/vcard; charset=utf-8",
+			"If-None-Match": "*",
+		},
+		body: [
+			"BEGIN:VCARD",
+			"VERSION:3.0",
+			`UID:${unusualUid}`,
+			`FN:${unusualFn}`,
+			"N:Unusual;Smoke;;;",
+			"EMAIL:unusual@example.com",
+			"item1.X-ABLABEL:constructor",
+			"item1.X-ABRELATEDNAMES:Grace Hopper",
+			"item2.X-ABLABEL:_$!<Spouse>!$_",
+			"item2.X-ABRELATEDNAMES:Charles Babbage",
+			fold(`PHOTO;ENCODING=b;TYPE=JPEG:${photo}`),
+			"END:VCARD",
+			"",
+		].join("\r\n"),
+	});
+	if (!seeded.ok)
+		throw new Error(
+			`Could not seed unusual card: ${seeded.status} ${seeded.statusText}`,
+		);
+	log("seeded card with a photo and custom relation labels");
+
+	try {
+		// Servers may normalise a card on PUT (Radicale reorders properties), so
+		// compare against what the server stored, not against what was sent.
+		const before = await fetch(unusualHref, {
+			headers: { Authorization: authorization },
+		});
+		if (!before.ok)
+			throw new Error(`Could not read unusual card back: ${before.status}`);
+		const storedBefore = await before.text();
+
+		const unusual = JSON.parse(
+			unwrapText(
+				await client.callTool({
+					name: "get-contact",
+					arguments: { uid: unusualUid, addressBookUrl },
+				}),
+			),
+		) as { fn?: string; emails: string[] };
+		if (unusual.fn !== unusualFn)
+			throw new Error(`Unusual get fn mismatch: ${unusual.fn}`);
+		if (!unusual.emails.includes("unusual@example.com"))
+			throw new Error("Email missing from the unusual card");
+		log("got unusual card by uid");
+
+		unwrapText(
+			await client.callTool({
+				name: "update-contact",
+				arguments: {
+					uid: unusualUid,
+					addressBookUrl,
+					note: "updated by smoke test",
+				},
+			}),
+		);
+		const updated = await fetch(unusualHref, {
+			headers: { Authorization: authorization },
+		});
+		if (!updated.ok)
+			throw new Error(`Could not read updated card: ${updated.status}`);
+		const storedAfter = new Set(unfold(await updated.text()));
+		if (!storedAfter.has("NOTE:updated by smoke test"))
+			throw new Error("Update did not write the note");
+		// Every property the update did not touch must come back unchanged.
+		const lost = unfold(storedBefore).filter(
+			(line) => !/^(NOTE|REV|PRODID)[;:]/i.test(line) && !storedAfter.has(line),
+		);
+		if (lost.length > 0)
+			throw new Error(
+				`update-contact lost or changed properties: ${lost
+					.map((line) => line.slice(0, 60))
+					.join(" | ")}`,
+			);
+		log("update kept the photo and relation labels");
+	} finally {
+		// Leave no smoke data behind, whether the steps above passed or not.
+		await fetch(unusualHref, {
+			method: "DELETE",
+			headers: { Authorization: authorization },
+		}).catch(() => {});
+	}
+	log("deleted unusual card");
 
 	await client.close();
 	console.log("\n✅ smoke test passed");
