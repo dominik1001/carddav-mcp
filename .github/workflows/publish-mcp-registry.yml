@@ -30,6 +30,20 @@ jobs:
         run: |
           VERSION=${TAG#v}
           jq --arg v "$VERSION" '.packages[0].version = $v | .version = $v' server.json > server.tmp && mv server.tmp server.json
+      # The registry checks that the npm version exists. Right after
+      # semantic-release publishes, npm can still answer 404 for a minute or
+      # more, so wait until the version is visible.
+      - name: Wait for the version on npm
+        run: |
+          pkg=$(jq -r '.packages[0].identifier' server.json)
+          VERSION=${TAG#v}
+          for _ in $(seq 1 40); do
+            npm view "$pkg@$VERSION" version >/dev/null 2>&1 && exit 0
+            echo "Waiting for $pkg@$VERSION on npm..."
+            sleep 15
+          done
+          echo "$pkg@$VERSION did not appear on npm within 10 minutes" >&2
+          exit 1
       - name: Install mcp-publisher
         run: |
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
