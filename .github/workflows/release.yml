@@ -141,6 +141,8 @@ jobs:
     needs: [test, knip, docs, smoke]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    outputs:
+      version: ${{ steps.released.outputs.version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -161,7 +163,28 @@ jobs:
           node-version: "22"
       - run: npm ci
       - run: npm run build
+      - name: Record existing release tags
+        run: git tag --list 'v*' | sort > "$RUNNER_TEMP/tags-before"
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LEFTHOOK: "0"
+      # The tag semantic-release just created, if any. Comparing against the
+      # tags from before the run keeps re-runs from re-announcing a release.
+      - name: Detect published version
+        id: released
+        run: |
+          tag=$(git tag --list 'v*' | sort | comm -13 "$RUNNER_TEMP/tags-before" - | head -n1)
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  # The GitHub Release above is created with GITHUB_TOKEN, which does not
+  # trigger publish-mcp-registry.yml's `release` event, so call it here.
+  mcp-registry:
+    needs: release
+    if: needs.release.outputs.version != ''
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-mcp-registry.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
