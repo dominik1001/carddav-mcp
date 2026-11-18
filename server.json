@@ -1,7 +1,7 @@
 {
 	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
 	"name": "io.github.dominik1001/carddav-mcp",
-	"description": "CardDAV contact operations (list address books, list, get, create, update, delete contacts) as MCP tools.",
+	"description": "CardDAV contacts as MCP tools: list address books; list, get, create, update and delete contacts.",
 	"repository": {
 		"url": "https://github.com/dominik1001/carddav-mcp",
 		"source": "github"
