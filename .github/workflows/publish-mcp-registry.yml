@@ -1,7 +1,17 @@
 name: Publish to MCP Registry
 on:
+  # Releases created by a person (gh release create, the GitHub UI).
   release:
     types: [published]
+  # Releases created by semantic-release in release.yml. Those use
+  # GITHUB_TOKEN, and events caused by GITHUB_TOKEN never start other
+  # workflows, so release.yml calls this one directly.
+  workflow_call:
+    inputs:
+      version:
+        description: Released version without the leading "v", e.g. 0.2.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -10,11 +20,15 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.version && format('v{0}', inputs.version) || github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       - name: Set version in server.json
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${TAG#v}
           jq --arg v "$VERSION" '.packages[0].version = $v | .version = $v' server.json > server.tmp && mv server.tmp server.json
       - name: Install mcp-publisher
         run: |
