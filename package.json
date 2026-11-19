@@ -1,6 +1,6 @@
 {
 	"name": "carddav-mcp",
-	"mcpName": "io.github.dominik1001/carddav-mcp",
+	"mcpName": "io.github.langmail/carddav-mcp",
 	"description": "A CardDAV client using Model Context Protocol (MCP) to expose contacts and address books as tools for AI assistants.",
 	"version": "0.1.1",
 	"main": "dist/index.js",
@@ -39,12 +39,12 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dominik1001/carddav-mcp.git"
+		"url": "https://github.com/langmail/carddav-mcp.git"
 	},
 	"bugs": {
-		"url": "https://github.com/dominik1001/carddav-mcp/issues"
+		"url": "https://github.com/langmail/carddav-mcp/issues"
 	},
-	"homepage": "https://github.com/dominik1001/carddav-mcp#readme",
+	"homepage": "https://github.com/langmail/carddav-mcp#readme",
 	"author": "Dominik Grusemann",
 	"license": "MIT",
 	"engines": {
