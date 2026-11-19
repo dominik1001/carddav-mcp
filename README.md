@@ -4,7 +4,7 @@
 
 📇 A CardDAV Model Context Protocol (MCP) server to expose contacts and address books as tools for AI assistants.
 
-[![Release](https://github.com/dominik1001/carddav-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/dominik1001/carddav-mcp/actions/workflows/release.yml)
+[![Release](https://github.com/langmail/carddav-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/langmail/carddav-mcp/actions/workflows/release.yml)
 [![npm version](https://badge.fury.io/js/carddav-mcp.svg)](https://www.npmjs.com/package/carddav-mcp)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
