@@ -7,6 +7,8 @@ type ToolHandler = (params: {
 	addressBookUrl: string;
 }) => Promise<{ content: { type: string; text: string }[] }>;
 
+const BOOK = "https://dav.example.org/dav/contacts/";
+
 function makeServer() {
 	let toolHandler: ToolHandler | null = null;
 	const server = new McpServer({ name: "test-server", version: "0.1.0" });
@@ -20,7 +22,7 @@ function makeServer() {
 	return { server, getHandler: () => toolHandler };
 }
 
-function run(client: unknown, addressBookUrl = "/dav/contacts/") {
+function run(client: unknown, addressBookUrl = BOOK) {
 	const { server, getHandler } = makeServer();
 	registerListContacts(client as DAVClient, server);
 	const handler = getHandler();
@@ -37,13 +39,11 @@ function parse(result: { content: { text: string }[] }) {
 describe("registerListContacts", () => {
 	test("returns a summary per contact", async () => {
 		const mockClient = {
-			propfind: vi
-				.fn()
-				.mockResolvedValue([
-					{ href: "/dav/contacts/" },
-					{ href: "/dav/contacts/a.vcf" },
-					{ href: "/dav/contacts/b.vcf" },
-				]),
+			propfind: vi.fn().mockResolvedValue([
+				{ href: "/dav/contacts/", ok: true, props: {}, raw: {} },
+				{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
+				{ href: "/dav/contacts/b.vcf", ok: true, props: {}, raw: {} },
+			]),
 			fetchVCards: vi.fn().mockResolvedValue([
 				{
 					url: "/dav/contacts/a.vcf",
@@ -59,12 +59,12 @@ describe("registerListContacts", () => {
 		const result = await run(mockClient);
 
 		expect(mockClient.propfind).toHaveBeenCalledWith({
-			url: "/dav/contacts/",
-			props: { "d:getetag": {} },
+			url: BOOK,
+			props: { "d:resourcetype": {} },
 			depth: "1",
 		});
 		expect(mockClient.fetchVCards).toHaveBeenCalledWith({
-			addressBook: { url: "/dav/contacts/" },
+			addressBook: { url: BOOK },
 			objectUrls: ["/dav/contacts/a.vcf", "/dav/contacts/b.vcf"],
 		});
 		expect(parse(result)).toEqual([
@@ -80,12 +80,10 @@ describe("registerListContacts", () => {
 
 	test("skips entries without vCard data", async () => {
 		const mockClient = {
-			propfind: vi
-				.fn()
-				.mockResolvedValue([
-					{ href: "/dav/contacts/broken.vcf" },
-					{ href: "/dav/contacts/a.vcf" },
-				]),
+			propfind: vi.fn().mockResolvedValue([
+				{ href: "/dav/contacts/broken.vcf", ok: true, props: {}, raw: {} },
+				{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
+			]),
 			fetchVCards: vi.fn().mockResolvedValue([
 				{ url: "/dav/contacts/broken.vcf", data: undefined },
 				{
@@ -98,52 +96,103 @@ describe("registerListContacts", () => {
 		expect(parse(await run(mockClient))).toHaveLength(1);
 	});
 
-	test("resolves absolute hrefs against an absolute collection url", async () => {
+	test.each([
+		[
+			"a differing trailing slash",
+			"https://dav.example.org/dav/contacts",
+			"/dav/contacts/",
+		],
+		[
+			"differing percent-encoding",
+			"https://dav.example.org/carddav/user@example.org/Contacts/",
+			"/carddav/user%40example.org/Contacts/",
+		],
+	])("recognises the collection's own href with %s", async (_, url, ownHref) => {
+		const objectUrl = `${ownHref.replace(/\/$/, "")}/a.vcf`;
 		const mockClient = {
-			propfind: vi
-				.fn()
-				.mockResolvedValue([
-					{ href: "https://dav.example.org/carddav/32/" },
-					{ href: "https://dav.example.org/carddav/32/a.vcf" },
-				]),
+			propfind: vi.fn().mockResolvedValue([
+				{ href: ownHref, ok: true, props: {}, raw: {} },
+				{ href: objectUrl, ok: true, props: {}, raw: {} },
+			]),
 			fetchVCards: vi.fn().mockResolvedValue([]),
 		};
 
-		await run(mockClient, "https://dav.example.org/carddav/32/");
+		await run(mockClient, url);
 
 		expect(mockClient.fetchVCards).toHaveBeenCalledWith({
-			addressBook: { url: "https://dav.example.org/carddav/32/" },
-			objectUrls: ["/carddav/32/a.vcf"],
+			addressBook: { url },
+			objectUrls: [objectUrl],
 		});
 	});
 
-	test("recognises the collection's own href with a differing trailing slash", async () => {
+	test("leaves out failed members and sub-collections", async () => {
 		const mockClient = {
-			propfind: vi
-				.fn()
-				.mockResolvedValue([
-					{ href: "/dav/contacts/" },
-					{ href: "/dav/contacts/a.vcf" },
-				]),
+			propfind: vi.fn().mockResolvedValue([
+				{ href: "/dav/contacts/", ok: true, props: {}, raw: {} },
+				{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
+				{ href: "/dav/contacts/gone.vcf", ok: false },
+				{
+					href: "/dav/contacts/sub/",
+					ok: true,
+					props: { resourcetype: { collection: {} } },
+				},
+			]),
 			fetchVCards: vi.fn().mockResolvedValue([]),
 		};
 
-		// Caller passes the collection without the trailing slash the server uses.
-		await run(mockClient, "/dav/contacts");
+		await run(mockClient);
 
 		expect(mockClient.fetchVCards).toHaveBeenCalledWith({
-			addressBook: { url: "/dav/contacts" },
+			addressBook: { url: BOOK },
 			objectUrls: ["/dav/contacts/a.vcf"],
 		});
 	});
 
-	test("does not call fetchVCards for an empty address book", async () => {
+	test("reports a failed PROPFIND instead of an empty list", async () => {
 		const mockClient = {
-			propfind: vi.fn().mockResolvedValue([{ href: "/dav/contacts/" }]),
+			propfind: vi.fn().mockResolvedValue([
+				{
+					href: BOOK,
+					ok: false,
+					status: 404,
+					statusText: "Not Found",
+					raw: "",
+				},
+			]),
 			fetchVCards: vi.fn(),
 		};
 
-		expect(parse(await run(mockClient))).toEqual([]);
+		await expect(run(mockClient)).rejects.toThrow(/404 Not Found/);
 		expect(mockClient.fetchVCards).not.toHaveBeenCalled();
+	});
+
+	test("retries once when a card disappears between listing and fetching", async () => {
+		const mockClient = {
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
+				]),
+			fetchVCards: vi
+				.fn()
+				.mockRejectedValueOnce(new Error("multiget failed: 404"))
+				.mockResolvedValueOnce([]),
+		};
+
+		expect(parse(await run(mockClient))).toEqual([]);
+		expect(mockClient.propfind).toHaveBeenCalledTimes(2);
+	});
+
+	test("returns an empty list for an empty address book", async () => {
+		const mockClient = {
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					{ href: "/dav/contacts/", ok: true, props: {}, raw: {} },
+				]),
+			fetchVCards: vi.fn().mockResolvedValue([]),
+		};
+
+		expect(parse(await run(mockClient))).toEqual([]);
 	});
 });

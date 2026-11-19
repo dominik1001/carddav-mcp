@@ -75,6 +75,14 @@ describe("registerUpdateContact", () => {
 
 	test("throws when the contact does not exist", async () => {
 		const mockClient = {
+			propfind: vi.fn().mockResolvedValue([
+				{
+					href: "https://dav.example.org/dav/contacts/",
+					ok: true,
+					props: {},
+					raw: {},
+				},
+			]),
 			fetchVCards: vi.fn().mockResolvedValue([]),
 			updateVCard: vi.fn(),
 		};
@@ -85,7 +93,11 @@ describe("registerUpdateContact", () => {
 		if (!handler) throw new Error("handler not registered");
 
 		await expect(
-			handler({ uid: "missing", addressBookUrl: "/dav/contacts/", fn: "x" }),
+			handler({
+				uid: "missing",
+				addressBookUrl: "https://dav.example.org/dav/contacts/",
+				fn: "x",
+			}),
 		).rejects.toThrow("Contact not found: missing");
 		expect(mockClient.updateVCard).not.toHaveBeenCalled();
 	});

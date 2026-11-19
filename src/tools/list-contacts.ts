@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DAVClient } from "tsdav";
 import { z } from "zod";
+import { fetchCards } from "./fetch-cards.js";
 import { parseVCard } from "./vcard.js";
 
 type ListContactsInput = {
@@ -18,43 +19,6 @@ export const listContactsDefinition = {
 		"A list of contacts, each containing `uid`, `fn` (formatted name), `emails`, and `phones`",
 } as const;
 
-/** Lets us normalise relative collection URLs without a real origin. */
-const RELATIVE_BASE = "http://carddav.invalid";
-
-/**
- * Lists the href of every card in the address book via PROPFIND.
- *
- * `fetchVCards` discovers hrefs with an addressbook-query REPORT whose default
- * filter is a condition-less `<prop-filter name="FN"/>`. RFC 6352 says that
- * matches every card carrying an FN property, but some servers — Open-Xchange,
- * and therefore mailbox.org — return an empty result instead. The collection
- * then looks empty and no card is ever fetched. PROPFIND is mandatory for a
- * CardDAV collection, so discovering hrefs that way works everywhere.
- */
-async function listCardUrls(
-	client: DAVClient,
-	addressBookUrl: string,
-): Promise<string[]> {
-	const collection = new URL(addressBookUrl, RELATIVE_BASE);
-	const responses = await client.propfind({
-		url: addressBookUrl,
-		props: { "d:getetag": {} },
-		depth: "1",
-	});
-	// Servers differ on whether a collection's own href carries a trailing
-	// slash, and it need not match the one the caller passed in. Comparing the
-	// raw paths would let the collection itself slip into the result and be
-	// requested as if it were a card.
-	const withoutTrailingSlash = (path: string) => path.replace(/\/+$/, "");
-	const collectionPath = withoutTrailingSlash(collection.pathname);
-
-	return responses
-		.map((response) => response.href)
-		.filter((href): href is string => Boolean(href))
-		.map((href) => new URL(href, collection).pathname)
-		.filter((path) => withoutTrailingSlash(path) !== collectionPath);
-}
-
 export function registerListContacts(client: DAVClient, server: McpServer) {
 	server.registerTool(
 		listContactsDefinition.name,
@@ -64,14 +28,7 @@ export function registerListContacts(client: DAVClient, server: McpServer) {
 		},
 		async (args: ListContactsInput) => {
 			const { addressBookUrl } = args;
-			const objectUrls = await listCardUrls(client, addressBookUrl);
-			const cards =
-				objectUrls.length === 0
-					? []
-					: await client.fetchVCards({
-							addressBook: { url: addressBookUrl },
-							objectUrls,
-						});
+			const cards = await fetchCards(client, addressBookUrl);
 			const data = cards
 				.filter((card) => typeof card.data === "string")
 				.map((card) => {
