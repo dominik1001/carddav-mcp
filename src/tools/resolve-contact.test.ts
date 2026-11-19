@@ -1,6 +1,11 @@
 import type { DAVClient } from "tsdav";
 import { describe, expect, test, vi } from "vitest";
+import { fetchCards } from "./fetch-cards.js";
 import { resolveContact } from "./resolve-contact.js";
+
+vi.mock("./fetch-cards.js", () => ({
+	fetchCards: vi.fn().mockResolvedValue([]),
+}));
 
 function vcardFor(uid: string): string {
 	return `BEGIN:VCARD\r\nVERSION:3.0\r\nUID:${uid}\r\nFN:Test\r\nEND:VCARD\r\n`;
@@ -29,14 +34,12 @@ describe("resolveContact", () => {
 
 	test("falls back to scanning the address book when the href misses", async () => {
 		const card = { url: "/dav/contacts/other-name.vcf", data: vcardFor("abc") };
+		vi.mocked(fetchCards).mockResolvedValueOnce([
+			{ url: "/dav/contacts/x.vcf", data: vcardFor("xyz") },
+			card,
+		]);
 		const mockClient = {
-			fetchVCards: vi
-				.fn()
-				.mockResolvedValueOnce([])
-				.mockResolvedValueOnce([
-					{ url: "/dav/contacts/x.vcf", data: vcardFor("xyz") },
-					card,
-				]),
+			fetchVCards: vi.fn().mockResolvedValue([]),
 		};
 
 		const result = await resolveContact(
@@ -46,16 +49,14 @@ describe("resolveContact", () => {
 		);
 
 		expect(result).toBe(card);
-		expect(mockClient.fetchVCards).toHaveBeenCalledTimes(2);
+		expect(fetchCards).toHaveBeenCalledWith(mockClient, "/dav/contacts/");
 	});
 
 	test("falls back when the multi-get itself rejects", async () => {
 		const card = { url: "/dav/contacts/other.vcf", data: vcardFor("abc") };
+		vi.mocked(fetchCards).mockResolvedValueOnce([card]);
 		const mockClient = {
-			fetchVCards: vi
-				.fn()
-				.mockRejectedValueOnce(new Error("404"))
-				.mockResolvedValueOnce([card]),
+			fetchVCards: vi.fn().mockRejectedValue(new Error("404")),
 		};
 
 		const result = await resolveContact(
@@ -70,11 +71,9 @@ describe("resolveContact", () => {
 	test("ignores an href hit whose UID does not match", async () => {
 		const stale = { url: "/dav/contacts/abc.vcf", data: vcardFor("different") };
 		const real = { url: "/dav/contacts/z.vcf", data: vcardFor("abc") };
+		vi.mocked(fetchCards).mockResolvedValueOnce([stale, real]);
 		const mockClient = {
-			fetchVCards: vi
-				.fn()
-				.mockResolvedValueOnce([stale])
-				.mockResolvedValueOnce([stale, real]),
+			fetchVCards: vi.fn().mockResolvedValue([stale]),
 		};
 
 		const result = await resolveContact(

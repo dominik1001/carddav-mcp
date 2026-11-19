@@ -3,6 +3,10 @@ import type { DAVClient } from "tsdav";
 import { describe, expect, test, vi } from "vitest";
 import { registerUpdateContact } from "./update-contact.js";
 
+vi.mock("./fetch-cards.js", () => ({
+	fetchCards: vi.fn().mockResolvedValue([]),
+}));
+
 type ToolHandler = (params: {
 	uid: string;
 	addressBookUrl: string;

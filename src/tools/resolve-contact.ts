@@ -1,5 +1,6 @@
 import type { DAVClient, DAVVCard } from "tsdav";
 import { hrefFor } from "./carddav-href.js";
+import { fetchCards } from "./fetch-cards.js";
 import { parseVCard } from "./vcard.js";
 
 /**
@@ -13,10 +14,9 @@ export async function resolveContact(
 	addressBookUrl: string,
 	uid: string,
 ): Promise<DAVVCard> {
-	const addressBook = { url: addressBookUrl };
 	try {
 		const [direct] = await client.fetchVCards({
-			addressBook,
+			addressBook: { url: addressBookUrl },
 			objectUrls: [hrefFor(addressBookUrl, uid)],
 		});
 		if (
@@ -32,7 +32,7 @@ export async function resolveContact(
 		// hrefs that do not exist instead of reporting a 404 per href.
 	}
 
-	const all = await client.fetchVCards({ addressBook });
+	const all = await fetchCards(client, addressBookUrl);
 	const match = all.find(
 		(card) =>
 			typeof card.data === "string" && parseVCard(card.data).uid === uid,

@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DAVClient } from "tsdav";
 import { z } from "zod";
+import { fetchCards } from "./fetch-cards.js";
 import { parseVCard } from "./vcard.js";
 
 type ListContactsInput = {
@@ -27,9 +28,7 @@ export function registerListContacts(client: DAVClient, server: McpServer) {
 		},
 		async (args: ListContactsInput) => {
 			const { addressBookUrl } = args;
-			const cards = await client.fetchVCards({
-				addressBook: { url: addressBookUrl },
-			});
+			const cards = await fetchCards(client, addressBookUrl);
 			const data = cards
 				.filter((card) => typeof card.data === "string")
 				.map((card) => {
