@@ -170,29 +170,16 @@ describe("updateVCardData", () => {
 });
 
 describe("stripBinaryValues", () => {
-	test("replaces an inline photo with a size marker", () => {
-		const card = [
-			"BEGIN:VCARD",
-			"VERSION:3.0",
-			"FN:Ada Lovelace",
-			`PHOTO;ENCODING=b;TYPE=jpeg:${"A".repeat(5000)}`,
-			"END:VCARD",
-		].join("\r\n");
-		const stripped = stripBinaryValues(card);
-		expect(stripped).toContain(
-			"PHOTO;ENCODING=b;TYPE=jpeg:<3750 bytes omitted>",
-		);
-		expect(stripped).toContain("FN:Ada Lovelace");
-		expect(stripped.length).toBeLessThan(300);
-	});
-
 	test.each([
+		["vCard 3.0", "PHOTO;ENCODING=b;TYPE=jpeg:", "QUJD"],
 		["Outlook", "X-MS-CARDPICTURE;TYPE=JPEG;ENCODING=BASE64:", "QUJD"],
 		["vCard 2.1", "PHOTO;JPEG;BASE64:", "QUJD"],
 		["a data: URI", "PHOTO:", "data:image/jpeg;base64,QUJD"],
 	])("strips a %s base64 value and counts decoded bytes", (_, head, value) => {
 		const card = `BEGIN:VCARD\r\n${head}${value}\r\nEND:VCARD`;
-		expect(stripBinaryValues(card)).toContain(`${head}<3 bytes omitted>`);
+		const stripped = stripBinaryValues(card);
+		expect(stripped).toContain(`${head}<3 bytes omitted>`);
+		expect(stripped).not.toContain(value);
 	});
 
 	test("leaves a photo reference by URL alone", () => {
@@ -290,7 +277,7 @@ describe("parseRelations", () => {
 			"END:VCARD",
 		].join("\r\n");
 		expect(parseRelations(card)).toEqual({
-			Related: ["Robin Example", "Kim Example"],
+			Related: ["Kim Example", "Robin Example"],
 		});
 	});
 

@@ -189,8 +189,7 @@ function relatedRoles(head: string): string[] {
  */
 export function parseRelations(data: string): Record<string, string[]> {
 	const labels = new Map<string, string>();
-	const names = new Map<string, string>();
-	const ungrouped: string[] = [];
+	const names: [group: string | null, person: string][] = [];
 	// Roles are free text, so `constructor` must not hit Object.prototype.
 	const relations: Record<string, string[]> = Object.create(null);
 
@@ -198,44 +197,40 @@ export function parseRelations(data: string): Record<string, string[]> {
 	// appear several times over. Collecting them keeps every name; the same
 	// person reached twice, as X-SPOUSE usually is, is recorded once.
 	const add = (role: string, person: string) => {
-		const people = relations[role];
-		if (!people) {
-			relations[role] = [person];
-		} else if (!people.includes(person)) {
-			people.push(person);
-		}
+		if (!person) return;
+		relations[role] ??= [];
+		if (!relations[role].includes(person)) relations[role].push(person);
 	};
+	const text = (line: string) =>
+		unescapeText(splitLine(line)?.value ?? "").trim();
 
 	for (const line of unfoldLines(data)) {
-		const name = propertyName(line);
-		if (
-			name !== "X-SPOUSE" &&
-			name !== "RELATED" &&
-			name !== "X-ABLABEL" &&
-			name !== "X-ABRELATEDNAMES"
-		)
-			continue;
-		const split = splitLine(line);
-		const value = split && unescapeText(split.value).trim();
-		if (!split || !value) continue;
-		const group = propertyGroup(line);
-		if (name === "X-SPOUSE") {
-			add("Spouse", value);
-		} else if (name === "RELATED") {
-			for (const role of relatedRoles(split.head)) add(role, value);
-		} else if (name === "X-ABLABEL") {
-			if (group) labels.set(group, APPLE_LABEL.exec(value)?.[1] ?? value);
-		} else if (group) {
-			names.set(group, value);
-		} else {
-			ungrouped.push(value);
+		switch (propertyName(line)) {
+			case "X-SPOUSE":
+				add("Spouse", text(line));
+				break;
+			case "RELATED":
+				for (const role of relatedRoles(splitLine(line)?.head ?? "")) {
+					add(role, text(line));
+				}
+				break;
+			case "X-ABLABEL": {
+				const group = propertyGroup(line);
+				const label = text(line);
+				if (group && label) {
+					labels.set(group, APPLE_LABEL.exec(label)?.[1] ?? label);
+				}
+				break;
+			}
+			case "X-ABRELATEDNAMES":
+				names.push([propertyGroup(line), text(line)]);
+				break;
 		}
 	}
 
 	for (const [group, person] of names) {
-		add(labels.get(group) ?? "Related", person);
+		add((group && labels.get(group)) ?? "Related", person);
 	}
-	for (const person of ungrouped) add("Related", person);
 	return relations;
 }
 
