@@ -134,7 +134,9 @@ function propertyGroup(line: string): string | null {
 /** Apple writes its relation labels as `_$!<Spouse>!$_`. */
 const APPLE_LABEL = /^_\$!<(.+)>!\$_$/;
 
-const BINARY_PROPERTIES = new Set(["PHOTO", "LOGO", "SOUND", "KEY"]);
+/** `ENCODING=b` (3.0), `ENCODING=BASE64` (Outlook) or a bare `BASE64` (2.1). */
+const BASE64_PARAM = /^(ENCODING=(B|BASE64)|BASE64)$/i;
+const BASE64_DATA_URI = /^data:[^,]*;base64,/i;
 
 /**
  * Replaces embedded binary payloads with a short marker.
@@ -148,29 +150,49 @@ const BINARY_PROPERTIES = new Set(["PHOTO", "LOGO", "SOUND", "KEY"]);
 export function stripBinaryValues(data: string): string {
 	const lines = unfoldLines(data).map((line) => {
 		const split = splitLine(line);
-		const name = propertyName(line);
-		if (!split || !name || !BINARY_PROPERTIES.has(name)) return line;
-		const isBinary =
-			/;ENCODING=(B|BASE64)(;|$)/i.test(split.head) ||
-			split.value.startsWith("data:");
-		return isBinary
-			? `${split.head}:<${split.value.length} bytes omitted>`
-			: line;
+		if (!split) return line;
+		const dataUri = BASE64_DATA_URI.exec(split.value);
+		const base64Param = split.head
+			.split(";")
+			.slice(1)
+			.some((p) => BASE64_PARAM.test(p));
+		if (!dataUri && !base64Param) return line;
+		const base64 = split.value
+			.slice(dataUri?.[0].length ?? 0)
+			.replace(/[\s=]/g, "");
+		return `${split.head}:<${Math.floor((base64.length * 3) / 4)} bytes omitted>`;
 	});
 	return `${lines.join("\r\n")}\r\n`;
 }
 
+/** Role names from `RELATED;TYPE=spouse,friend`, capitalised like Apple's labels. */
+function relatedRoles(head: string): string[] {
+	const types = head
+		.split(";")
+		.slice(1)
+		.flatMap((p) =>
+			/^TYPE=/i.test(p) ? p.slice(5).replace(/"/g, "").split(",") : [],
+		)
+		.filter(Boolean);
+	return types.length > 0
+		? types.map((t) => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
+		: ["Related"];
+}
+
 /**
- * Relations recorded on a card, keyed by role: `{ Spouse: "Sam Example" }`.
+ * Relations recorded on a card, keyed by role: `{ Spouse: ["Sam Example"] }`.
  *
- * Clients store these as a pair sharing a property group — `item3.X-ABLABEL`
+ * Apple clients store these as a pair sharing a property group — `item3.X-ABLABEL`
  * holds the role and `item3.X-ABRELATEDNAMES` the person — which is tedious to
- * reassemble from raw vCard text and easy to get wrong.
+ * reassemble from raw vCard text and easy to get wrong. RFC 6350 `RELATED`
+ * carries the role in TYPE. A name without a role is kept under `Related`.
  */
 export function parseRelations(data: string): Record<string, string[]> {
 	const labels = new Map<string, string>();
 	const names = new Map<string, string>();
-	const relations: Record<string, string[]> = {};
+	const ungrouped: string[] = [];
+	// Roles are free text, so `constructor` must not hit Object.prototype.
+	const relations: Record<string, string[]> = Object.create(null);
 
 	// A role is not unique on a card: children, siblings and friends routinely
 	// appear several times over. Collecting them keeps every name; the same
@@ -185,24 +207,35 @@ export function parseRelations(data: string): Record<string, string[]> {
 	};
 
 	for (const line of unfoldLines(data)) {
-		const split = splitLine(line);
 		const name = propertyName(line);
-		if (!split || !name) continue;
-		const value = unescapeText(split.value).trim();
-		if (name === "X-SPOUSE" && value) add("Spouse", value);
+		if (
+			name !== "X-SPOUSE" &&
+			name !== "RELATED" &&
+			name !== "X-ABLABEL" &&
+			name !== "X-ABRELATEDNAMES"
+		)
+			continue;
+		const split = splitLine(line);
+		const value = split && unescapeText(split.value).trim();
+		if (!split || !value) continue;
 		const group = propertyGroup(line);
-		if (!group || !value) continue;
-		if (name === "X-ABLABEL") {
-			labels.set(group, APPLE_LABEL.exec(value)?.[1] ?? value);
-		} else if (name === "X-ABRELATEDNAMES") {
+		if (name === "X-SPOUSE") {
+			add("Spouse", value);
+		} else if (name === "RELATED") {
+			for (const role of relatedRoles(split.head)) add(role, value);
+		} else if (name === "X-ABLABEL") {
+			if (group) labels.set(group, APPLE_LABEL.exec(value)?.[1] ?? value);
+		} else if (group) {
 			names.set(group, value);
+		} else {
+			ungrouped.push(value);
 		}
 	}
 
-	for (const [group, role] of labels) {
-		const person = names.get(group);
-		if (person) add(role, person);
+	for (const [group, person] of names) {
+		add(labels.get(group) ?? "Related", person);
 	}
+	for (const person of ungrouped) add("Related", person);
 	return relations;
 }
 

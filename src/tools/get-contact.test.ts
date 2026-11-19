@@ -67,6 +67,43 @@ describe("registerGetContact", () => {
 		});
 	});
 
+	test("returns relations and omits the inline photo", async () => {
+		const card = [
+			"BEGIN:VCARD",
+			"VERSION:3.0",
+			"UID:a",
+			"FN:Ada Lovelace",
+			`PHOTO;ENCODING=b;TYPE=jpeg:${"QUJD".repeat(1000)}`,
+			"item1.X-ABLABEL:_$!<Spouse>!$_",
+			"item1.X-ABRELATEDNAMES:Sam Example",
+			"END:VCARD",
+			"",
+		].join("\r\n");
+		const mockClient = {
+			fetchVCards: vi
+				.fn()
+				.mockResolvedValue([{ url: "/dav/contacts/a.vcf", data: card }]),
+		};
+
+		const { server, getHandler } = makeServer();
+		registerGetContact(mockClient as unknown as DAVClient, server);
+		const handler = getHandler();
+		if (!handler) throw new Error("handler not registered");
+
+		const result = await handler({
+			uid: "a",
+			addressBookUrl: "/dav/contacts/",
+		});
+		const text = result.content[0]?.text;
+		if (!text) throw new Error("no text content");
+		const data = JSON.parse(text);
+		expect(data.relations).toEqual({ Spouse: ["Sam Example"] });
+		expect(data.vcard).toContain(
+			"PHOTO;ENCODING=b;TYPE=jpeg:<3000 bytes omitted>",
+		);
+		expect(data.vcard).not.toContain("QUJD");
+	});
+
 	test("propagates a not-found error", async () => {
 		const mockClient = {
 			fetchVCards: vi.fn().mockResolvedValue([]),

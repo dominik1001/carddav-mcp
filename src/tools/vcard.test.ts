@@ -180,10 +180,19 @@ describe("stripBinaryValues", () => {
 		].join("\r\n");
 		const stripped = stripBinaryValues(card);
 		expect(stripped).toContain(
-			"PHOTO;ENCODING=b;TYPE=jpeg:<5000 bytes omitted>",
+			"PHOTO;ENCODING=b;TYPE=jpeg:<3750 bytes omitted>",
 		);
 		expect(stripped).toContain("FN:Ada Lovelace");
 		expect(stripped.length).toBeLessThan(300);
+	});
+
+	test.each([
+		["Outlook", "X-MS-CARDPICTURE;TYPE=JPEG;ENCODING=BASE64:", "QUJD"],
+		["vCard 2.1", "PHOTO;JPEG;BASE64:", "QUJD"],
+		["a data: URI", "PHOTO:", "data:image/jpeg;base64,QUJD"],
+	])("strips a %s base64 value and counts decoded bytes", (_, head, value) => {
+		const card = `BEGIN:VCARD\r\n${head}${value}\r\nEND:VCARD`;
+		expect(stripBinaryValues(card)).toContain(`${head}<3 bytes omitted>`);
 	});
 
 	test("leaves a photo reference by URL alone", () => {
@@ -244,6 +253,45 @@ describe("parseRelations", () => {
 			"END:VCARD",
 		].join("\r\n");
 		expect(parseRelations(card)).toEqual({ Spouse: ["Sam Example"] });
+	});
+
+	test("accepts a custom label that names an Object.prototype member", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"item1.X-ABLABEL:constructor",
+			"item1.X-ABRELATEDNAMES:Bob Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({ constructor: ["Bob Example"] });
+	});
+
+	test("reads RFC 6350 RELATED with its TYPE as the role", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"VERSION:4.0",
+			"RELATED;TYPE=spouse;VALUE=text:Sam Example",
+			"RELATED;TYPE=child,friend;VALUE=text:Alice Example",
+			"RELATED:urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Spouse: ["Sam Example"],
+			Child: ["Alice Example"],
+			Friend: ["Alice Example"],
+			Related: ["urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6"],
+		});
+	});
+
+	test("keeps a related name that has no label under Related", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"X-ABRELATEDNAMES;TYPE=pref:Kim Example",
+			"item3.X-ABRELATEDNAMES:Robin Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Related: ["Robin Example", "Kim Example"],
+		});
 	});
 
 	test("returns nothing for a card without relations", () => {
