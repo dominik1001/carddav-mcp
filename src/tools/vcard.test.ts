@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { parseVCard, serializeVCard, updateVCardData } from "./vcard.js";
+import {
+	parseRelations,
+	parseVCard,
+	serializeVCard,
+	stripBinaryValues,
+	updateVCardData,
+} from "./vcard.js";
 
 describe("serializeVCard", () => {
 	test("produces a CRLF-terminated vCard 3.0 with UID, FN and derived N", () => {
@@ -160,5 +166,122 @@ describe("updateVCardData", () => {
 		expect(() => updateVCardData("BEGIN:VCARD\r\nUID:u1", { fn: "x" })).toThrow(
 			/END:VCARD/,
 		);
+	});
+});
+
+describe("stripBinaryValues", () => {
+	test.each([
+		["vCard 3.0", "PHOTO;ENCODING=b;TYPE=jpeg:", "QUJD"],
+		["Outlook", "X-MS-CARDPICTURE;TYPE=JPEG;ENCODING=BASE64:", "QUJD"],
+		["vCard 2.1", "PHOTO;JPEG;BASE64:", "QUJD"],
+		["a data: URI", "PHOTO:", "data:image/jpeg;base64,QUJD"],
+	])("strips a %s base64 value and counts decoded bytes", (_, head, value) => {
+		const card = `BEGIN:VCARD\r\n${head}${value}\r\nEND:VCARD`;
+		const stripped = stripBinaryValues(card);
+		expect(stripped).toContain(`${head}<3 bytes omitted>`);
+		expect(stripped).not.toContain(value);
+	});
+
+	test("leaves a photo reference by URL alone", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"PHOTO;VALUE=uri:https://example.com/ada.jpg",
+			"END:VCARD",
+		].join("\r\n");
+		expect(stripBinaryValues(card)).toContain(
+			"PHOTO;VALUE=uri:https://example.com/ada.jpg",
+		);
+	});
+});
+
+describe("parseRelations", () => {
+	test("pairs a label with the related name by property group", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"FN:Alex Example",
+			"X-SPOUSE:Sam Example",
+			"item1.X-ABLABEL:homePage",
+			"item2.X-ABLABEL:_$!<Mother>!$_",
+			"item2.X-ABRELATEDNAMES:Kim Example",
+			"item4.X-ABLABEL:_$!<Brother>!$_",
+			"item4.X-ABRELATEDNAMES:Robin Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Spouse: ["Sam Example"],
+			Mother: ["Kim Example"],
+			Brother: ["Robin Example"],
+		});
+	});
+
+	test("keeps every name when a role appears more than once", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"FN:Alex Example",
+			"item1.X-ABLABEL:_$!<Child>!$_",
+			"item1.X-ABRELATEDNAMES:Alice Example",
+			"item2.X-ABLABEL:_$!<Child>!$_",
+			"item2.X-ABRELATEDNAMES:Bob Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Child: ["Alice Example", "Bob Example"],
+		});
+	});
+
+	test("records a person reached twice only once", () => {
+		// X-SPOUSE and an item pair commonly name the same person.
+		const card = [
+			"BEGIN:VCARD",
+			"FN:Alex Example",
+			"X-SPOUSE:Sam Example",
+			"item1.X-ABLABEL:_$!<Spouse>!$_",
+			"item1.X-ABRELATEDNAMES:Sam Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({ Spouse: ["Sam Example"] });
+	});
+
+	test("accepts a custom label that names an Object.prototype member", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"item1.X-ABLABEL:constructor",
+			"item1.X-ABRELATEDNAMES:Bob Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({ constructor: ["Bob Example"] });
+	});
+
+	test("reads RFC 6350 RELATED with its TYPE as the role", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"VERSION:4.0",
+			"RELATED;TYPE=spouse;VALUE=text:Sam Example",
+			"RELATED;TYPE=child,friend;VALUE=text:Alice Example",
+			"RELATED:urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Spouse: ["Sam Example"],
+			Child: ["Alice Example"],
+			Friend: ["Alice Example"],
+			Related: ["urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6"],
+		});
+	});
+
+	test("keeps a related name that has no label under Related", () => {
+		const card = [
+			"BEGIN:VCARD",
+			"X-ABRELATEDNAMES;TYPE=pref:Kim Example",
+			"item3.X-ABRELATEDNAMES:Robin Example",
+			"END:VCARD",
+		].join("\r\n");
+		expect(parseRelations(card)).toEqual({
+			Related: ["Kim Example", "Robin Example"],
+		});
+	});
+
+	test("returns nothing for a card without relations", () => {
+		expect(parseRelations("BEGIN:VCARD\r\nFN:Ada\r\nEND:VCARD")).toEqual({});
 	});
 });

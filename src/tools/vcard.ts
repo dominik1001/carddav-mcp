@@ -123,6 +123,117 @@ function propertyName(line: string): string | null {
 	return withoutGroup.toUpperCase();
 }
 
+/** Property group of a logical line, e.g. `item3` in `item3.X-ABLABEL:...`. */
+function propertyGroup(line: string): string | null {
+	const split = splitLine(line);
+	if (!split) return null;
+	const name = split.head.split(";")[0] ?? "";
+	return name.includes(".") ? (name.split(".")[0] ?? "").toLowerCase() : null;
+}
+
+/** Apple writes its relation labels as `_$!<Spouse>!$_`. */
+const APPLE_LABEL = /^_\$!<(.+)>!\$_$/;
+
+/** `ENCODING=b` (3.0), `ENCODING=BASE64` (Outlook) or a bare `BASE64` (2.1). */
+const BASE64_PARAM = /^(ENCODING=(B|BASE64)|BASE64)$/i;
+const BASE64_DATA_URI = /^data:[^,]*;base64,/i;
+
+/**
+ * Replaces embedded binary payloads with a short marker.
+ *
+ * An inline PHOTO is base64 and routinely runs to tens of thousands of
+ * characters — on a card carrying a portrait it is easily 95% of the vCard.
+ * Handing that to a model wastes its context without telling it anything, so
+ * the marker keeps the fact that a photo exists and drops the bytes. Folding
+ * is not restored, the result is meant to be read rather than stored.
+ */
+export function stripBinaryValues(data: string): string {
+	const lines = unfoldLines(data).map((line) => {
+		const split = splitLine(line);
+		if (!split) return line;
+		const dataUri = BASE64_DATA_URI.exec(split.value);
+		const base64Param = split.head
+			.split(";")
+			.slice(1)
+			.some((p) => BASE64_PARAM.test(p));
+		if (!dataUri && !base64Param) return line;
+		const base64 = split.value
+			.slice(dataUri?.[0].length ?? 0)
+			.replace(/[\s=]/g, "");
+		return `${split.head}:<${Math.floor((base64.length * 3) / 4)} bytes omitted>`;
+	});
+	return `${lines.join("\r\n")}\r\n`;
+}
+
+/** Role names from `RELATED;TYPE=spouse,friend`, capitalised like Apple's labels. */
+function relatedRoles(head: string): string[] {
+	const types = head
+		.split(";")
+		.slice(1)
+		.flatMap((p) =>
+			/^TYPE=/i.test(p) ? p.slice(5).replace(/"/g, "").split(",") : [],
+		)
+		.filter(Boolean);
+	return types.length > 0
+		? types.map((t) => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
+		: ["Related"];
+}
+
+/**
+ * Relations recorded on a card, keyed by role: `{ Spouse: ["Sam Example"] }`.
+ *
+ * Apple clients store these as a pair sharing a property group — `item3.X-ABLABEL`
+ * holds the role and `item3.X-ABRELATEDNAMES` the person — which is tedious to
+ * reassemble from raw vCard text and easy to get wrong. RFC 6350 `RELATED`
+ * carries the role in TYPE. A name without a role is kept under `Related`.
+ */
+export function parseRelations(data: string): Record<string, string[]> {
+	const labels = new Map<string, string>();
+	const names: [group: string | null, person: string][] = [];
+	// Roles are free text, so `constructor` must not hit Object.prototype.
+	const relations: Record<string, string[]> = Object.create(null);
+
+	// A role is not unique on a card: children, siblings and friends routinely
+	// appear several times over. Collecting them keeps every name; the same
+	// person reached twice, as X-SPOUSE usually is, is recorded once.
+	const add = (role: string, person: string) => {
+		if (!person) return;
+		relations[role] ??= [];
+		if (!relations[role].includes(person)) relations[role].push(person);
+	};
+	const text = (line: string) =>
+		unescapeText(splitLine(line)?.value ?? "").trim();
+
+	for (const line of unfoldLines(data)) {
+		switch (propertyName(line)) {
+			case "X-SPOUSE":
+				add("Spouse", text(line));
+				break;
+			case "RELATED":
+				for (const role of relatedRoles(splitLine(line)?.head ?? "")) {
+					add(role, text(line));
+				}
+				break;
+			case "X-ABLABEL": {
+				const group = propertyGroup(line);
+				const label = text(line);
+				if (group && label) {
+					labels.set(group, APPLE_LABEL.exec(label)?.[1] ?? label);
+				}
+				break;
+			}
+			case "X-ABRELATEDNAMES":
+				names.push([propertyGroup(line), text(line)]);
+				break;
+		}
+	}
+
+	for (const [group, person] of names) {
+		add((group && labels.get(group)) ?? "Related", person);
+	}
+	return relations;
+}
+
 function parseName(value: string): ContactName {
 	const [family, given, middle, prefix, suffix] = splitComponents(value).map(
 		(c) => unescapeText(c),
