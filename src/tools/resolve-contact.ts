@@ -14,10 +14,9 @@ export async function resolveContact(
 	addressBookUrl: string,
 	uid: string,
 ): Promise<DAVVCard> {
-	const addressBook = { url: addressBookUrl };
 	try {
 		const [direct] = await client.fetchVCards({
-			addressBook,
+			addressBook: { url: addressBookUrl },
 			objectUrls: [hrefFor(addressBookUrl, uid)],
 		});
 		if (

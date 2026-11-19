@@ -9,6 +9,8 @@ type ToolHandler = (params: {
 
 const BOOK = "https://dav.example.org/dav/contacts/";
 
+const member = (href: string) => ({ href, ok: true, props: {}, raw: {} });
+
 function makeServer() {
 	let toolHandler: ToolHandler | null = null;
 	const server = new McpServer({ name: "test-server", version: "0.1.0" });
@@ -39,11 +41,13 @@ function parse(result: { content: { text: string }[] }) {
 describe("registerListContacts", () => {
 	test("returns a summary per contact", async () => {
 		const mockClient = {
-			propfind: vi.fn().mockResolvedValue([
-				{ href: "/dav/contacts/", ok: true, props: {}, raw: {} },
-				{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
-				{ href: "/dav/contacts/b.vcf", ok: true, props: {}, raw: {} },
-			]),
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					member("/dav/contacts/"),
+					member("/dav/contacts/a.vcf"),
+					member("/dav/contacts/b.vcf"),
+				]),
 			fetchVCards: vi.fn().mockResolvedValue([
 				{
 					url: "/dav/contacts/a.vcf",
@@ -80,10 +84,12 @@ describe("registerListContacts", () => {
 
 	test("skips entries without vCard data", async () => {
 		const mockClient = {
-			propfind: vi.fn().mockResolvedValue([
-				{ href: "/dav/contacts/broken.vcf", ok: true, props: {}, raw: {} },
-				{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
-			]),
+			propfind: vi
+				.fn()
+				.mockResolvedValue([
+					member("/dav/contacts/broken.vcf"),
+					member("/dav/contacts/a.vcf"),
+				]),
 			fetchVCards: vi.fn().mockResolvedValue([
 				{ url: "/dav/contacts/broken.vcf", data: undefined },
 				{
@@ -110,10 +116,7 @@ describe("registerListContacts", () => {
 	])("recognises the collection's own href with %s", async (_, url, ownHref) => {
 		const objectUrl = `${ownHref.replace(/\/$/, "")}/a.vcf`;
 		const mockClient = {
-			propfind: vi.fn().mockResolvedValue([
-				{ href: ownHref, ok: true, props: {}, raw: {} },
-				{ href: objectUrl, ok: true, props: {}, raw: {} },
-			]),
+			propfind: vi.fn().mockResolvedValue([member(ownHref), member(objectUrl)]),
 			fetchVCards: vi.fn().mockResolvedValue([]),
 		};
 
@@ -128,8 +131,8 @@ describe("registerListContacts", () => {
 	test("leaves out failed members and sub-collections", async () => {
 		const mockClient = {
 			propfind: vi.fn().mockResolvedValue([
-				{ href: "/dav/contacts/", ok: true, props: {}, raw: {} },
-				{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
+				member("/dav/contacts/"),
+				member("/dav/contacts/a.vcf"),
 				{ href: "/dav/contacts/gone.vcf", ok: false },
 				{
 					href: "/dav/contacts/sub/",
@@ -170,9 +173,8 @@ describe("registerListContacts", () => {
 		const mockClient = {
 			propfind: vi
 				.fn()
-				.mockResolvedValue([
-					{ href: "/dav/contacts/a.vcf", ok: true, props: {}, raw: {} },
-				]),
+				.mockResolvedValueOnce([member("/dav/contacts/a.vcf")])
+				.mockResolvedValueOnce([member("/dav/contacts/")]),
 			fetchVCards: vi
 				.fn()
 				.mockRejectedValueOnce(new Error("multiget failed: 404"))
@@ -183,13 +185,19 @@ describe("registerListContacts", () => {
 		expect(mockClient.propfind).toHaveBeenCalledTimes(2);
 	});
 
+	test("rethrows the fetch error when no card disappeared", async () => {
+		const mockClient = {
+			propfind: vi.fn().mockResolvedValue([member("/dav/contacts/a.vcf")]),
+			fetchVCards: vi.fn().mockRejectedValue(new Error("401 Unauthorized")),
+		};
+
+		await expect(run(mockClient)).rejects.toThrow("401 Unauthorized");
+		expect(mockClient.fetchVCards).toHaveBeenCalledTimes(1);
+	});
+
 	test("returns an empty list for an empty address book", async () => {
 		const mockClient = {
-			propfind: vi
-				.fn()
-				.mockResolvedValue([
-					{ href: "/dav/contacts/", ok: true, props: {}, raw: {} },
-				]),
+			propfind: vi.fn().mockResolvedValue([member("/dav/contacts/")]),
 			fetchVCards: vi.fn().mockResolvedValue([]),
 		};
 

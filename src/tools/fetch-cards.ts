@@ -28,15 +28,14 @@ async function listCardUrls(
 		);
 	}
 
-	return responses
-		.filter(
-			(r): r is typeof r & { href: string } =>
-				r.ok &&
-				Boolean(r.href) &&
-				r !== own &&
-				!Object.keys(r.props?.resourcetype ?? {}).includes("collection"),
-		)
-		.map((r) => r.href);
+	return responses.flatMap((r) =>
+		r.ok &&
+		r.href &&
+		r !== own &&
+		!Object.keys(r.props?.resourcetype ?? {}).includes("collection")
+			? [r.href]
+			: [],
+	);
 }
 
 /** Fetches every card in the address book, retrying once if a card vanishes between listing and fetching. */
@@ -49,7 +48,9 @@ export async function fetchCards(
 	const objectUrls = await listCardUrls(client, addressBookUrl);
 	try {
 		return await fetchFrom(objectUrls);
-	} catch {
-		return fetchFrom(await listCardUrls(client, addressBookUrl));
+	} catch (err) {
+		const relisted = await listCardUrls(client, addressBookUrl);
+		if (objectUrls.every((url) => relisted.includes(url))) throw err;
+		return fetchFrom(relisted);
 	}
 }

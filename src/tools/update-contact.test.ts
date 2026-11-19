@@ -3,6 +3,10 @@ import type { DAVClient } from "tsdav";
 import { describe, expect, test, vi } from "vitest";
 import { registerUpdateContact } from "./update-contact.js";
 
+vi.mock("./fetch-cards.js", () => ({
+	fetchCards: vi.fn().mockResolvedValue([]),
+}));
+
 type ToolHandler = (params: {
 	uid: string;
 	addressBookUrl: string;
@@ -75,14 +79,6 @@ describe("registerUpdateContact", () => {
 
 	test("throws when the contact does not exist", async () => {
 		const mockClient = {
-			propfind: vi.fn().mockResolvedValue([
-				{
-					href: "https://dav.example.org/dav/contacts/",
-					ok: true,
-					props: {},
-					raw: {},
-				},
-			]),
 			fetchVCards: vi.fn().mockResolvedValue([]),
 			updateVCard: vi.fn(),
 		};
@@ -93,11 +89,7 @@ describe("registerUpdateContact", () => {
 		if (!handler) throw new Error("handler not registered");
 
 		await expect(
-			handler({
-				uid: "missing",
-				addressBookUrl: "https://dav.example.org/dav/contacts/",
-				fn: "x",
-			}),
+			handler({ uid: "missing", addressBookUrl: "/dav/contacts/", fn: "x" }),
 		).rejects.toThrow("Contact not found: missing");
 		expect(mockClient.updateVCard).not.toHaveBeenCalled();
 	});
